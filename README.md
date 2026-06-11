@@ -1,0 +1,208 @@
+# Co-Scientist Multi-Agent Framework (General-Purpose Edition)
+
+**Autonomous Hypothesis Discovery with AI Swarms**
+
+Co-Scientist is a production‑ready multi‑agent AI system that autonomously generates, evaluates, ranks, and validates hypotheses for **any domain** – business, science, policy, engineering, etc. It combines a **Kimi Work‑style swarm orchestrator** with a scientific discovery pipeline (generation → reflection → evolution → ranking → meta‑review), local browser automation, security guards, and a pluggable LLM/embedding layer that works with OpenAI, OpenRouter, Ollama, and local sentence‑transformers.
+
+Originally inspired by Google’s Co‑Scientist and the Robin closed‑loop system, this framework has been **completely generalised** – no hardcoded climate science. You can research business models, drug repurposing, materials science, or any other topic.
+
+---
+
+## Architecture
+
+```text
+User → CLI / TUI
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                     SwarmOrchestrator                         │
+│  (K2.6 plans parallel sub‑agent tasks)                        │
+│  ┌────────────┬────────────┬────────────┬──────────────┐     │
+│  │ Generation │   Search   │ Reflection │  Evolution   │     │
+│  │  workers   │  workers   │  workers   │   workers    │     │
+│  └────────────┴────────────┴────────────┴──────────────┘     │
+│                     │ (asyncio.gather)                        │
+│                     ▼                                         │
+│               Merge Gate & GovernanceGate                     │
+└───────────────────────────────────────────────────────────────┘
+        │
+        ▼
+   Hypothesis Pool (ChromaDB + SQLite)
+        │
+        ▼
+   Ranking (TrueSkill / ELO tournament)
+        │
+        ▼
+   Meta‑Review & Self‑Improvement Loop
+        │
+        ▼
+   Final Leaderboard + Recommendations
+
+### Core Agents (Co-Scientist Pipeline)
+
+```
+
+| Agent | Role |
+|-------|------|
+| **Supervisor** | Top-level orchestrator. Parses goals, configures pipeline, manages workers. |
+| **Generation** | Brainstorms ideas, searches literature, generates novel climate hypotheses grounded in physical reality. |
+| **Reflection** | Critical reviewer. Fact-checks, evaluates novelty, identifies flaws, and runs **3-Layer Safety checks**. |
+| **Proximity** | Maps hypotheses to semantic vector space (HDBSCAN) to detect redundant concepts. |
+| **Evolution** | Refines hypotheses using LLM-driven critique integration, combines ideas, bridges logical gaps. |
+| **Ranking** | ELO tournament system. Head-to-head debates judged by LLM weighing Climate Impact, Safety, and Equity. |
+| **Meta-review** | Cross-agent evaluation, final quality assessment. |
+
+### Robin Closed-Loop Agents (Climate Validation)
+
+| Agent | Role |
+|-------|------|
+| **Osprey** | Climate literature search (EarthArXiv, IPCC reports, Semantic Scholar). Updates Epistemic Uncertainty. |
+| **Condor** | Deep analysis. Evaluates scenario alignment, carbon budget viability, and tipping point proximity. |
+| **Albatross** | Data execution. Integrates with the FaIR climate emulator and runs Docker-sandboxed Python code on climate datasets (e.g. `xarray` over Copernicus data) with an **8-instance consensus**. |
+
+### Key Innovation: Dynamic ELO Ranking & Epistemic Uncertainty
+
+The Ranking Agent uses a modified TrueSkill rating system to evaluate hypotheses:
+1. **Head-to-head Debates**: Structured LLM evaluation judging Climate Impact, Safety (Tipping Points), and Equity.
+2. **Epistemic Uncertainty Tracking**: Decoupled from TrueSkill `sigma`. Contradictory literature or analysis disagreement widens uncertainty; consensus narrows it.
+3. **Combined Leaderboard**: Ranks hypotheses based on `conservative_trueskill - (epistemic_uncertainty * 10)`. Flags highly-ranked but highly-uncertain hypotheses for human governance review.
+
+### Key Innovation: Climate Data & Emulator Integration
+
+The system natively bridges to real-world climate tooling:
+- **FaIR Emulator**: Built-in wrapper for the widely-used FaIR (Finite Amplitude Impulse Response) simple climate model, projecting temperatures across SSP scenarios.
+- **Copernicus CDS (Async)**: Integrates with the Copernicus Climate Data Store using non-blocking background polling threads so long-running planetary data downloads do not block agent pipelines.
+
+### Key Innovation: 3-Layer Climate Safety Guardrails
+
+A strict `ClimateSafetyAssessor` scrutinizes every intervention:
+1. **Layer 1: Tipping Points**: Rejects interventions severely risking AMOC collapse, Greenland Ice Sheet melt, etc.
+2. **Layer 2: Planetary Boundaries**: Quarantines interventions threatening biosphere integrity or ocean acidification.
+3. **Layer 3: Precautionary Principle**: SRM (Solar Radiation Modification) interventions mandate hard governance gates due to termination shock risks.
+
+### Key Innovation: Secure Docker Sandbox execution
+
+Data extraction tools generated by the AI (like filtering petabytes of ERA5 global climate data with `xarray`) run in a strict **2GB memory-limited Docker sandbox** with no network access. A static pre-execution validator blocks infinite `.compute()` RAM spikes on unbounded datasets, requiring bounding box selections `.sel()` first.
+
+## Installation
+
+### Using UV (Recommended)
+
+```bash
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install
+uv venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
+
+uv pip install -e ".[all]"
+```
+
+### Using pip
+
+```bash
+pip install -e ".[all]"
+```
+
+## Quick Start
+
+### 1. Initialize Project
+
+```bash
+co-scientist init --path my_research
+cd my_research
+cp .env.example .env
+# Edit .env with your LLM, Search, and Climate API keys
+```
+
+### 2. Run Research
+
+```bash
+# Unlimited mode — runs until convergence or manual stop
+co-scientist discover "Find novel marine carbon removal with TRL > 6" --converge
+
+# With safety cap (max 20 cycles)
+co-scientist discover "Evaluate stratospheric aerosol injection risks" --max-cycles 20
+
+# Old capped mode (basic research cycle)
+co-scientist research "Find novel Solar Radiation Modification (SRM) methods"
+
+# With closed-loop validation (Robin)
+co-scientist research "Ocean Alkalinity Enhancement deployment strategies" --closed-loop --iterations 3
+
+# Full options
+co-scientist research "Novel Carbon Dioxide Removal via enhanced rock weathering" \
+    --domain climate_science \
+    --iterations 5 \
+    --closed-loop \
+    --output results.json
+```
+
+### 3. Check Status
+
+```bash
+# View leaderboard
+co-scientist leaderboard --top 10
+
+# List agents
+co-scientist agents
+```
+
+## Configuration
+
+Create a `config.yaml` file:
+
+```yaml
+project_name: climate-intervention-discovery
+max_iterations: 10
+
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ${OPENAI_API_KEY}
+  temperature: 0.7
+
+climate:
+  ssp_scenarios: ["SSP1-1.9", "SSP1-2.6", "SSP2-4.5", "SSP3-7.0", "SSP5-8.5"]
+  fair_version: "2.1"
+  use_fair_for_screening: true
+
+agents:
+  max_hypotheses_per_batch: 10
+  similarity_threshold: 0.85
+  min_debates_per_hypothesis: 10
+  albatross_consensus_instances: 8
+  albatross_consensus_tolerance: 0.1
+  docker_memory_limit: "2g"
+
+database:
+  vector_db_path: "./data/vector_db"
+  checkpoint_dir: "./data/checkpoints"
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key (optional) |
+| `SEARCH__SERPER_API_KEY` | Serper.dev API key for Google search |
+| `SEARCH__TINYFISH_API_KEY` | Tinyfish API key for markdown extraction |
+| `SEMANTIC_SCHOLAR_API_KEY` | Semantic Scholar API key |
+| `CLIMATE__CDS_API_KEY` | Copernicus API Key |
+| `CLIMATE__EARTHDATA_USERNAME` | NASA EarthData Username |
+| `CLIMATE__EARTHDATA_PASSWORD` | NASA EarthData Password |
+
+## Testing
+
+### Automated Test Suite
+```bash
+# Run automated tests
+PYTHONPATH=src pytest tests/ -v
+```
+
+## License
+
+MIT License - see LICENSE file for details.
