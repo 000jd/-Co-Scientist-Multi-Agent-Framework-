@@ -1,0 +1,14 @@
+domain_name: business_model_innovation
+candidate_fields:
+  - name
+  - description
+  - metrics: { roi, market_size, risk }
+safety_module: "default_safety"
+validation_module: "default_validator"
+tools:
+  - web_search
+  - read_excel
+  - run_python_script
+prompts:
+  generation: "Generate 10 new business models for {goal}..."
+  reflection_criteria: ["profitability", "scalability", "regulatory_risk"]

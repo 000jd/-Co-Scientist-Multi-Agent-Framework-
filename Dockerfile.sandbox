@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+# Climate data packages
+RUN pip install --no-cache-dir \
+    xarray \
+    zarr \
+    netCDF4 \
+    numpy \
+    pandas \
+    matplotlib \
+    cartopy \
+    fair>=2.1 \
+    cfgrib \
+    dask
+
+# Set memory-friendly defaults
+ENV MALLOC_TRIM_THRESHOLD_=100000
+ENV OPENBLAS_NUM_THREADS=1
+
+WORKDIR /sandbox

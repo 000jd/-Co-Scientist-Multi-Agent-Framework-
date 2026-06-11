@@ -1,0 +1,27 @@
+version: "3.8"
+services:
+  co-scientist:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data/climate_zarr:/data/climate_zarr
+      - ./co_scientist.db:/app/co_scientist.db
+    depends_on:
+      - chromadb
+  
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+  
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    mem_limit: 2g
+    cpus: 2.0
+
+volumes:
+  chroma_data:
