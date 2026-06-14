@@ -2,9 +2,8 @@
 Multi-provider LLM router with fallback chain.
 """
 
-from typing import List, Dict, Any, Optional, Type, AsyncIterator
+from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
-import json
 import logging
 import asyncio
 from co_scientist.core.config import LLMConfig
@@ -165,7 +164,6 @@ class CostTracker:
         self._lock = asyncio.Lock()
         
     async def add_cost(self, input_tokens: int, output_tokens: int, model: str = "gpt-4o"):
-        import asyncio
             
         # GPT-4o pricing: $5/1M input, $15/1M output
         rates = {
@@ -199,9 +197,11 @@ class LLMRouter:
         if "openai" in self.fallback_chain:
             self.chat_providers["openai"] = OpenAIProvider(api_key, config.model, config.embedding_model, self.cost_tracker)
         if "openrouter" in self.fallback_chain:
-            base_url = getattr(config, 'base_url', "https://openrouter.ai/api/v1")
+            base_url = getattr(config, 'base_url', None) or "https://openrouter.ai/api/v1"
+            import os
+            openrouter_key = os.environ.get("OPENROUTER_API_KEY", api_key)  # CLAUDE.md §6 .env key
             self.chat_providers["openrouter"] = OpenAIProvider(
-                api_key, config.model, config.embedding_model, self.cost_tracker, base_url=base_url
+                openrouter_key, config.model, config.embedding_model, self.cost_tracker, base_url=base_url
             )
         if "ollama" in self.fallback_chain:
             self.chat_providers["ollama"] = OpenAIProvider(

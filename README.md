@@ -1,10 +1,27 @@
-# Co-Scientist Multi-Agent Framework (General-Purpose Edition)
+# Co-Scientist Multi-Agent Framework — JARVIS Edition
 
-**Autonomous Hypothesis Discovery with AI Swarms**
+**An autonomous agent that executes any natural-language task — with the Co-Scientist hypothesis pipeline preserved as a built-in research tool.**
 
-Co-Scientist is a production‑ready multi‑agent AI system that autonomously generates, evaluates, ranks, and validates hypotheses for **any domain** – business, science, policy, engineering, etc. It combines a **Kimi Work‑style swarm orchestrator** with a scientific discovery pipeline (generation → reflection → evolution → ranking → meta‑review), local browser automation, security guards, and a pluggable LLM/embedding layer that works with OpenAI, OpenRouter, Ollama, and local sentence‑transformers.
+Co-Scientist has evolved from a hypothesis-generation pipeline into a general-purpose autonomous agent ("JARVIS-in-a-box"): give it a task in plain English and it **plans, acts in a sandbox, observes, and verifies** — looping until the work is actually done, not until it has produced text about the work. The original Co-Scientist research pipeline (generation → reflection → evolution → ranking → meta-review) is **kept intact** and invoked automatically for scientific research questions.
 
-Originally inspired by Google’s Co‑Scientist and the Robin closed‑loop system, this framework has been **completely generalised** – no hardcoded climate science. You can research business models, drug repurposing, materials science, or any other topic.
+```bash
+co-scientist task "compute the 50th Fibonacci number and write it to fib.txt"
+co-scientist task "research novel drug targets for Alzheimer's disease"   # → routes to the research pipeline
+co-scientist task --graph "research X, write a summary, and create slides" # → parallel task DAG
+```
+
+## JARVIS Mode — how it works
+
+| Capability | What it does | Where |
+|---|---|---|
+| **5-stage worker loop** | Think → Plan → Act → Observe → **Verify**. Terminates only on a *verified* `FINAL_ANSWER`, max-turns, or budget — never on "produced some text". | `agent/worker.py` |
+| **Execution sandbox** | Runs real shell commands. Provider resolves `e2b → docker → local` automatically, so it works on a laptop and scales to a cloud VM. | `infrastructure/execution_sandbox.py` |
+| **Task graph (DAG)** | Decomposes a goal into a dependency graph and runs ready nodes in parallel; one node failing does not kill independent branches. | `task_graph/`, `agent/command_center.py` |
+| **Dynamic tool forge** | No tool for the job? Vector-search the library; if absent, write a script, test it in the sandbox, and register it for reuse. | `agent/tools/tool_forge.py` |
+| **Guardian + file-level audit** | Every command/file write is risk-classified and gated; destructive actions (`rm -rf`, `mkfs`, …) are refused without permission. Every action is logged for replay/rollback. | `governance/` |
+| **Tools** | `bash` (primary), file ops, web search/fetch (prompt-injection-guarded), MCP client, computer-use. | `agent/tools/` |
+
+> **Note on `17! mod 1000`:** CLAUDE.md's example expects `880`, but `17!` has three trailing zeros, so the mathematically correct result is **`0`** — and the agent computes and verifies the true value rather than echoing the spec's literal.
 
 ---
 
@@ -117,7 +134,26 @@ cp .env.example .env
 # Edit .env with your LLM, Search, and Climate API keys
 ```
 
-### 2. Run Research
+### 2. Run an autonomous task (JARVIS)
+
+```bash
+# Any natural-language task — runs the 5-stage worker loop in a sandbox
+co-scientist task "compute 2^64 and write it to power.txt"
+
+# Decompose a multi-part goal into a parallel task DAG
+co-scientist task --graph "summarise the latest on RAG, then draft 3 slide titles"
+
+# Force the worker loop (skip intent routing) or force research routing
+co-scientist task --worker "list the 5 largest files under /etc by size"
+co-scientist task --research "novel catalysts for green hydrogen"
+
+# Inspect what an agent did (file-level audit replay / crash recovery)
+co-scientist resume --limit 50
+```
+
+> Requires an LLM: set `OPENROUTER_API_KEY` (free Kimi K2.6 default) in `.env`, or point `llm.provider`/`fallback_chain` at a local Ollama for zero-key use. Docker is used for sandboxing when available; otherwise it falls back to a project-scoped local subprocess.
+
+### 3. Run Research
 
 ```bash
 # Unlimited mode — runs until convergence or manual stop
@@ -140,7 +176,7 @@ co-scientist research "Novel Carbon Dioxide Removal via enhanced rock weathering
     --output results.json
 ```
 
-### 3. Check Status
+### 4. Check Status
 
 ```bash
 # View leaderboard

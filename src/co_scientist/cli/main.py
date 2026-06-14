@@ -114,6 +114,99 @@ def research(
         
 
 @app.command()
+def task(
+    ctx: typer.Context,
+    goal: str = typer.Argument(..., help="Any natural-language task to execute autonomously"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project id (defaults to a random one)"),
+    research: bool = typer.Option(False, "--research", help="Force routing to the research pipeline"),
+    worker: bool = typer.Option(False, "--worker", help="Force the JARVIS worker loop (skip intent routing)"),
+    graph: bool = typer.Option(False, "--graph", "-g", help="Decompose into a task DAG and run nodes in parallel"),
+):
+    """Execute an arbitrary task with the JARVIS worker loop (CLAUDE.md §7).
+
+    Research questions are routed to the Co-Scientist pipeline; everything else runs
+    the 5-stage Think→Plan→Act→Observe→Verify loop.
+    """
+    config = load_config(ctx.obj.get("config_path") or get_config_path())
+    if ctx.obj.get("verbose"):
+        config.debug = True
+
+    force_kind = "research" if research else ("task" if worker else None)
+    console.print(f"\n[bold green]JARVIS task:[/] {goal}\n")
+
+    async def _run():
+        from co_scientist.agent.task_runner import run_task
+        return await run_task(goal, config, project_id=project, force_kind=force_kind, use_graph=graph)
+
+    result = asyncio.run(_run())
+
+    if result.get("kind") == "error" or not result.get("success"):
+        console.print(f"[bold red]Task did not complete[/] "
+                      f"([dim]{result.get('stop_reason') or result.get('message','')}[/])")
+        if result.get("message"):
+            console.print(result["message"])
+        if result.get("diagnosis"):
+            console.print(f"[yellow]Diagnosis:[/] {result['diagnosis']}")
+    if result.get("kind") == "research":
+        console.print("[bold cyan]Research pipeline complete.[/] Top hypotheses:")
+        for row in result.get("leaderboard", [])[:5]:
+            console.print(f"  • {row.get('title','')} [dim](adj {row.get('adjusted_score')})[/]")
+        return
+
+    if result.get("answer"):
+        console.print(Panel(result["answer"], title="Answer", border_style="green"))
+    if result.get("nodes"):  # --graph mode: per-node DAG summary
+        console.print(f"[bold]Task graph:[/] {len(result.get('done', []))} done, "
+                      f"{len(result.get('failed', []))} failed")
+    if result.get("verified"):
+        console.print(f"[green]✓ verified[/] [dim]({result.get('verification_reason','')[:120]})[/]")
+    if result.get("artifacts"):
+        console.print("[bold]Artifacts:[/]")
+        for a in result["artifacts"]:
+            console.print(f"  • {a}")
+    cost = result.get("cost_usd")
+    tail = f"workspace: {result.get('workdir','-')} | turns: {result.get('turns','-')} "
+    tail += f"| stop: {result.get('stop_reason','-')}"
+    if cost is not None:
+        tail += f" | cost: ${cost}"
+    console.print(f"[dim]{tail}[/]")
+
+
+@app.command()
+def resume(
+    ctx: typer.Context,
+    audit_log: Optional[str] = typer.Option(None, "--audit", help="Path to audit.jsonl (default from config)"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Show the last N audited actions"),
+):
+    """Replay a task from the file-level audit log (CLAUDE.md §7 Phase 6/7 crash recovery)."""
+    config = load_config(ctx.obj.get("config_path") or get_config_path())
+    path = audit_log or config.agents.audit_log_path
+
+    async def _replay():
+        from co_scientist.governance.audit_logger import AuditLogger
+        logger = AuditLogger(path)
+        return await logger.get_recent(limit)
+
+    if not Path(path).exists():
+        console.print(f"[yellow]No audit log at {path}. Run a task first.[/]")
+        return
+    records = asyncio.run(_replay())
+    if not records:
+        console.print("[yellow]Audit log is empty.[/]")
+        return
+    table = Table(title=f"Audit replay ({len(records)} actions)", box=box.SIMPLE)
+    table.add_column("time", style="dim")
+    table.add_column("action", style="cyan")
+    table.add_column("agent")
+    table.add_column("detail")
+    for r in records:
+        detail = str(r.get("payload_preview") or r.get("payload") or "")[:80]
+        table.add_row(str(r.get("timestamp", ""))[11:19], str(r.get("action_type", "")),
+                      str(r.get("agent", "")), detail)
+    console.print(table)
+
+
+@app.command()
 def discover(
     ctx: typer.Context,
     goal: str = typer.Argument(..., help="Research goal"),

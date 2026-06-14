@@ -5,18 +5,49 @@ domain:
 
 debug: false
 
+# ── LLM (CLAUDE.md §2/§6) ──────────────────────────────────────────────────
+# Default: Kimi K2.6 (free) via OpenRouter — set OPENROUTER_API_KEY in .env.
+# Zero-key local alternative: provider/fallback_chain "ollama" + a local Ollama.
 llm:
-  provider: ollama
-  model: gemma4:e4b
-  embedding_model: embeddinggemma:300m
-  embedding_provider: ollama
-  embedding_api_base: http://localhost:11434
-  api_key: "ollama"
-  max_tokens: 4096
-  temperature: 0.7
-  fallback_chain: [ollama]
+  provider: openrouter
+  model: "moonshotai/kimi-k2.6:free"
+  base_url: "https://openrouter.ai/api/v1"
+  fallback_chain: ["openrouter", "openai", "anthropic"]
+  embedding_provider: openai
+  embedding_model: text-embedding-3-small
   max_total_cost_usd: 50.0
+  temperature: 0.7
+  max_tokens: 4096
 
+# ── JARVIS worker loop (CLAUDE.md §6 `agent:`) ─────────────────────────────
+agent:
+  max_turns: 50
+  max_task_depth: 4          # DAG recursion depth cap
+  context_compress_at: 0.92  # compress when 92% of context used
+  budget_usd: 5.0            # per-task cost cap
+
+# ── Execution sandbox (CLAUDE.md §6 `sandbox:`) ────────────────────────────
+sandbox:
+  provider: e2b              # "e2b" | "docker" | "local" (resolves with fallback)
+  e2b_timeout_seconds: 300
+  docker_memory_limit: "2g"
+  docker_cpu_limit: 2.0
+  docker_image: "coscientist-sandbox:latest"
+
+# ── Dynamic tool forge (CLAUDE.md §6 `tool_forge:`) ────────────────────────
+tool_forge:
+  max_repair_attempts: 5
+  library_path: "data/tool_library"
+  vector_search_top_k: 5
+
+# ── Worker swarm (CLAUDE.md §6 `swarm:`) ───────────────────────────────────
+swarm:
+  max_workers: 10
+  planner_enabled: true
+  use_long_context: true
+  long_context_top_n: 30
+
+# ── Research pipeline (preserved as a sub-tool) ────────────────────────────
 agents:
   docker_memory_limit: 2g
   docker_timeout_seconds: 300

@@ -1,9 +1,8 @@
 """Docker Sandbox for secure execution of code."""
 
-import asyncio
 import tempfile
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 from pydantic import BaseModel
 from co_scientist.core.config import AgentConfig
 

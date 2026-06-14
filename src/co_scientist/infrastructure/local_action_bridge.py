@@ -9,7 +9,6 @@ Install: pip install playwright && playwright install chromium
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Optional, Dict, Any
 import logging
