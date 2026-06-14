@@ -39,4 +39,17 @@ co-scientist = "co_scientist.cli.main:app"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "ruff>=0.1"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "ruff>=0.1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # asyncio subprocess transport GC fires after pytest-asyncio closes its per-test
+    # loop; harmless in production (single long-lived loop).
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]

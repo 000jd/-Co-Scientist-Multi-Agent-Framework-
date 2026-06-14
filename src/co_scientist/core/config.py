@@ -63,6 +63,41 @@ class AgentConfig(BaseSettings):
     # Audit log
     audit_log_path: str = "./data/audit/audit.jsonl"
 
+class WorkerConfig(BaseSettings):
+    """JARVIS worker-loop settings (CLAUDE.md §6 `agent:` section)."""
+    model_config = SettingsConfigDict(env_prefix="AGENT_", env_file=".env", extra="ignore")
+    max_turns: int = 50              # hard cap on Think→Plan→Act→Observe→Verify iterations
+    max_task_depth: int = 4          # DAG recursion depth cap
+    context_compress_at: float = 0.92  # compress when this fraction of context is used
+    budget_usd: float = 5.0          # per-task cost cap
+    context_token_budget: int = 200_000  # assumed model context window for compression math
+
+class SandboxConfig(BaseSettings):
+    """Execution sandbox settings (CLAUDE.md §6 `sandbox:` section)."""
+    model_config = SettingsConfigDict(env_prefix="SANDBOX_", env_file=".env", extra="ignore")
+    provider: str = "e2b"            # "e2b" | "docker" | "local"; resolves with graceful fallback
+    e2b_api_key: Optional[SecretStr] = None
+    e2b_timeout_seconds: int = 300
+    docker_memory_limit: str = "2g"
+    docker_cpu_limit: float = 2.0
+    docker_image: str = "coscientist-sandbox:latest"
+    local_timeout_seconds: int = 120  # local fallback subprocess timeout
+
+class ToolForgeConfig(BaseSettings):
+    """Dynamic tool forge settings (CLAUDE.md §6 `tool_forge:` section)."""
+    model_config = SettingsConfigDict(env_prefix="TOOL_FORGE_", env_file=".env", extra="ignore")
+    max_repair_attempts: int = 5
+    library_path: str = "data/tool_library"
+    vector_search_top_k: int = 5
+
+class SwarmConfig(BaseSettings):
+    """Worker-swarm settings (CLAUDE.md §6 `swarm:` section)."""
+    model_config = SettingsConfigDict(env_prefix="SWARM_", env_file=".env", extra="ignore")
+    max_workers: int = 10
+    planner_enabled: bool = True
+    use_long_context: bool = True
+    long_context_top_n: int = 30
+
 class DatabaseConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")
     url: str = "sqlite+aiosqlite:///./co_scientist.db"
@@ -103,6 +138,12 @@ class Config(BaseSettings):
     agents: AgentConfig = Field(default_factory=AgentConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
+
+    # JARVIS migration sections (CLAUDE.md §6)
+    agent: WorkerConfig = Field(default_factory=WorkerConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    tool_forge: ToolForgeConfig = Field(default_factory=ToolForgeConfig)
+    swarm: SwarmConfig = Field(default_factory=SwarmConfig)
 
     def get_candidate_model_class(self) -> Type[BaseModel]:
         from co_scientist.core.domain_models import Candidate

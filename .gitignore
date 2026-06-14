@@ -101,3 +101,8 @@ site/
 .gemini/
 pip-log.txt
 pip-delete-this-directory.txt
+specs/
+
+# JARVIS worker scratch workspaces + local session
+projects/
+.claude/
