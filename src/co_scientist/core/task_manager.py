@@ -33,20 +33,22 @@ class ConvergenceTracker:
         """True if leaderboard hasn't improved in N cycles."""
         if len(self.best_scores) < self.window_size + 1:
             return False
-            
-        recent_best = max(self.best_scores[-self.window_size:])
-        previous_best = max(self.best_scores[:-(self.window_size)])
-        
+
+        # Split: everything before the current window vs the current window
+        tail_start = len(self.best_scores) - self.window_size
+        previous_best = max(self.best_scores[:tail_start]) if tail_start > 0 else 0.0
+        recent_best = max(self.best_scores[tail_start:])
+
         # Also check if top-3 is stable (same IDs)
         if len(self.leaderboard_history) >= self.window_size:
             recent_ids = [
-                [e["id"] for e in lb[:3]] 
+                [e["id"] for e in lb[:3]]
                 for lb in self.leaderboard_history[-self.window_size:]
             ]
             # If all recent top-3 are identical, we're stable
             if all(ids == recent_ids[0] for ids in recent_ids):
                 return True
-                
+
         return (recent_best - previous_best) < self.improvement_threshold
 
 
@@ -131,7 +133,8 @@ class TaskManager:
             print(f"{'='*50}")
             
             # Run one cycle manually (bypassing the capped run_pipeline)
-            await self.orchestrator._run_cycle(cycle, research_goal, previous_insights)
+            convergence_info = str(self.convergence.best_scores[-3:]) if self.convergence.best_scores else ""
+            await self.orchestrator._run_cycle(cycle, research_goal, previous_insights, convergence_info=convergence_info)
             
             # Record state for convergence
             lb = self.orchestrator.leaderboard.to_display()

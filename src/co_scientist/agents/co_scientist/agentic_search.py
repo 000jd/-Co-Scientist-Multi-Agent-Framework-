@@ -49,8 +49,20 @@ class AgenticSearchAgent(BaseAgent):
         - hypothesis: Hypothesis (optional, to ground the search)
         """
         if not self.engine and not self.hybrid_engine:
-            return {"error": "No web search API key configured", "synthesis": "No API Key", "sources": []}
-            
+            return {"error": "No web search API key configured", "synthesis": "No API Key", "sources": [], "hypothesis_id": ""}
+
+        # Support swarm-injected hypothesis target: if no explicit query but pool_summary given,
+        # pick the first hypothesis without evidence to ground this search worker.
+        if "query" not in context and "pool_summary" in context:
+            for h in context.get("pool_summary", []):
+                if not getattr(h, "evidence", None):
+                    context["query"] = f"{h.title} {h.summary[:150]}"
+                    context["hypothesis_id"] = h.id
+                    break
+
+        if "query" not in context:
+            return {"error": "No query provided", "synthesis": "", "sources": [], "hypothesis_id": ""}
+
         original_query = context["query"]
         max_iterations = context.get("max_iterations", 3)
         memory = SearchMemory(query=original_query)
@@ -120,6 +132,7 @@ class AgenticSearchAgent(BaseAgent):
             "synthesis": synthesis,
             "sources": memory.findings,
             "memory": memory,
+            "hypothesis_id": context.get("hypothesis_id", ""),
         }
         
     async def _run_hybrid_fallback(self, query: str, memory: SearchMemory):

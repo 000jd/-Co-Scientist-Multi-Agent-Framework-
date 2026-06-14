@@ -45,6 +45,11 @@ class AgentConfig(BaseSettings):
     swarm_max_workers: int = 5          # cap parallel sub-agent dispatch
     swarm_ramp_per_cycle: int = 1       # add this many workers per cycle
     swarm_max_workers_ceiling: int = 8  # never exceed this
+
+    # PlannerAgent settings
+    planner_enabled: bool = True        # False = fall back to default plan without LLM planning call
+    use_long_context: bool = True       # serialize full pool into PlannerAgent prompt
+    long_context_top_n: int = 30        # how many hypotheses to include in planner context
     
     # LocalActionBridge / WebBridge
     browser_headless: bool = True

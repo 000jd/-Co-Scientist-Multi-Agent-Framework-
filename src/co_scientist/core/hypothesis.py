@@ -184,6 +184,7 @@ class HypothesisPool(Generic[CandidateT]):
                 "title": h.title[:80],
                 "mu": round(h.trueskill_rating.mu, 2),
                 "sigma": round(h.trueskill_rating.sigma, 2),
+                "adjusted_score": round(h.trueskill_rating.conservative_rating, 2),
                 "wins": h.debate_wins,
                 "losses": h.debate_losses,
                 "status": h.status.value,

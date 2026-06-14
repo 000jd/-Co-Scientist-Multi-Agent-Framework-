@@ -88,6 +88,57 @@ class OllamaEmbeddingProvider:
             resp.raise_for_status()
             return resp.json()["embedding"]
 
+
+class AnthropicProvider:
+    """Native Anthropic SDK provider (claude-* models)."""
+
+    def __init__(self, api_key: str, model: str, cost_tracker: Any):
+        self.api_key = api_key
+        self.model = model
+        self.cost_tracker = cost_tracker
+        try:
+            import anthropic
+            self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        except ImportError:
+            self.client = None
+
+    @staticmethod
+    def _strip_json_fence(text: str) -> str:
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        return text.strip()
+
+    async def complete(self, messages: List[Dict[str, str]], response_format=None) -> Any:
+        if not self.client:
+            raise RuntimeError("anthropic package not installed — run: pip install anthropic")
+        system = next((m["content"] for m in messages if m["role"] == "system"), "")
+        user_msgs = [m for m in messages if m["role"] != "system"]
+        response = await self.client.messages.create(
+            model=self.model,
+            max_tokens=4096,
+            system=system,
+            messages=user_msgs,
+        )
+        if hasattr(response, "usage") and response.usage:
+            await self.cost_tracker.add_cost(
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                self.model,
+            )
+        text = response.content[0].text
+        if response_format:
+            clean = self._strip_json_fence(text)
+            return response_format.model_validate_json(clean)
+        return text
+
+    async def embed(self, text: str) -> List[float]:
+        raise NotImplementedError("Anthropic does not provide embeddings — configure a separate embedding_provider")
+
 class SentenceTransformerEmbeddingProvider:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -156,6 +207,12 @@ class LLMRouter:
             self.chat_providers["ollama"] = OpenAIProvider(
                 "ollama", config.model, config.embedding_model, self.cost_tracker, base_url="http://localhost:11434/v1"
             )
+        if "anthropic" in self.fallback_chain:
+            anthropic_key = api_key  # reuse LLM_API_KEY or override via ANTHROPIC_API_KEY env var
+            import os
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY", anthropic_key)
+            anthropic_model = getattr(config, "anthropic_model", "claude-3-5-sonnet-20241022")
+            self.chat_providers["anthropic"] = AnthropicProvider(anthropic_key, anthropic_model, self.cost_tracker)
             
         # Initialize embedding provider
         emb_provider = getattr(config, "embedding_provider", "openai")

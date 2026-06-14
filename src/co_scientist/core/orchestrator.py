@@ -195,7 +195,7 @@ class CoScientistOrchestrator:
         await self.shutdown()
         return self.pool
         
-    async def _run_cycle(self, cycle_number: int, research_goal: str, previous_insights: str = "") -> None:
+    async def _run_cycle(self, cycle_number: int, research_goal: str, previous_insights: str = "", convergence_info: str = "") -> None:
         # 1. Swarm Fan-out
         swarm_res = await self.swarm_orchestrator.execute({
             "research_goal": research_goal,
@@ -203,6 +203,7 @@ class CoScientistOrchestrator:
             "cycle": cycle_number,
             "previous_insights": previous_insights,
             "max_workers": getattr(self.config.agents, "swarm_max_workers", 5),
+            "convergence_info": convergence_info,
         })
         
         merged = swarm_res.get("merged")

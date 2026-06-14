@@ -42,10 +42,12 @@ class GenerationAgent(BaseAgent):
         cycle = context.get("cycle", 0)
         previous_insights = context.get("previous_insights", "")
         scope = context.get("scope", "Generate hypotheses")
-        
+        # subtask is injected by WorkerPool for swarm workers; falls back to scope
+        subtask = context.get("subtask", "") or scope
+
         # Construct LLM prompt
         system_prompt = self._build_system_prompt(self.config.domain.name, cycle, previous_insights)
-        user_prompt = self._build_user_prompt(scope, research_goal, existing_hypotheses)
+        user_prompt = self._build_user_prompt(subtask, research_goal, existing_hypotheses)
         
         # Call LLM with structured output
         response = await self._call_llm(
@@ -87,8 +89,10 @@ class GenerationAgent(BaseAgent):
             prompt += f"\nKey insights from previous cycles to incorporate:\n{previous_insights}\n"
         return prompt
         
-    def _build_user_prompt(self, scope: str, research_goal: str, existing_hypotheses: List[Hypothesis]) -> str:
-        prompt = f"Scope for this task: {scope}\n\nOverall goal: {research_goal}\n"
+    def _build_user_prompt(self, subtask: str, research_goal: str, existing_hypotheses: List[Hypothesis]) -> str:
+        prompt = f"Overall goal: {research_goal}\n"
+        if subtask and subtask != "Generate hypotheses":
+            prompt += f"\nFocus specifically on: {subtask}\n"
         if existing_hypotheses:
             prompt += f"\nExisting hypotheses to build upon or differentiate from:\n"
             for h in existing_hypotheses[:5]:

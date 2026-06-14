@@ -103,8 +103,10 @@ class CombinedLeaderboard:
             epistemic_uncertainty_score=epistemic_uncertainty_score
         )
         
+    _FLAGGED_STATUSES = {"HIGH_RANKING_HIGH_UNCERTAINTY", "MODERATE_UNCERTAINTY"}
+
     def get_flagged(self) -> List[CombinedLeaderboardEntry]:
-        return [e for e in self.entries.values() if e.confidence_flag is not None]
+        return [e for e in self.entries.values() if e.confidence_flag in self._FLAGGED_STATUSES]
         
     def to_display(self, sort_by: str = "adjusted") -> List[Dict[str, Any]]:
         if sort_by == "adjusted":
@@ -120,10 +122,15 @@ class CombinedLeaderboard:
                 "id": e.hypothesis_id,
                 "title": e.title,
                 "elo": round(e.trueskill_conservative, 1),
+                "adjusted_score": round(e.adjusted_ranking, 2),
+                "mu": round(e.trueskill_mu, 2),
+                "sigma": round(e.trueskill_sigma, 2),
+                "uncertainty": round(e.epistemic_uncertainty_score, 3),
                 "wins": e.debate_wins,
                 "losses": e.debate_losses,
                 "draws": 0,
-                "tier": e.confidence_flag
+                "tier": e.confidence_flag,
+                "flag": e.confidence_flag,
             }
             for i, e in enumerate(sorted_entries)
         ]

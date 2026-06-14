@@ -20,6 +20,8 @@ from co_scientist.core.config import Config
 from co_scientist.core.events import EventBus, EventType, Event
 from co_scientist.core.hypothesis import Hypothesis, HypothesisPool
 from co_scientist.infrastructure.llm import LLMRouter
+from co_scientist.agents.co_scientist.planner import PlannerAgent, PlannerOutput, SwarmTask as PlannerTask
+from co_scientist.agents.co_scientist.worker_pool import WorkerPool, WorkerSpec, ResultMerger
 
 
 class SwarmTask(BaseModel):
@@ -75,6 +77,11 @@ class SwarmOrchestrator(BaseAgent):
         self.audit_logger = audit_logger
         self.injection_guard = injection_guard
         self.logger = logging.getLogger("swarm_orchestrator")
+        # PlannerAgent instantiated lazily (avoids circular imports at module load)
+        self._planner: Optional[PlannerAgent] = None
+        # WorkerPool for count-based fan-out (WorkerSpec.count > 1)
+        max_concurrent = getattr(getattr(config, "agents", None), "swarm_max_workers", 5)
+        self._worker_pool = WorkerPool(sub_agents, max_concurrent=max_concurrent)
         
     async def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -90,51 +97,72 @@ class SwarmOrchestrator(BaseAgent):
         cycle = context.get("cycle", 1)
         previous_insights = context.get("previous_insights", "")
         max_workers = context.get("max_workers", 5)
+        convergence_info = context.get("convergence_info", "")
         
         await self._publish_event(EventType.STAGE_STARTED, {"stage": "swarm_plan", "cycle": cycle})
-        
-        # Step 1: K2.6 plans the cycle
-        plan = await self._plan_cycle(goal, pool, cycle, previous_insights, max_workers)
+
+        # Step 1: PlannerAgent plans the cycle (K2.6 with full pool context)
+        plan = await self._plan_cycle(goal, pool, cycle, previous_insights, max_workers, convergence_info)
         self.logger.info(f"Swarm plan: {len(plan.tasks)} tasks, merge={plan.merge_strategy}")
-        
+
         if self.audit_logger:
             await self.audit_logger.record("swarm_plan", {"cycle": cycle, "tasks": len(plan.tasks), "reasoning": plan.reasoning[:200]})
-            
-        # Step 2: Fan-out — dispatch all tasks concurrently
+
         await self._publish_event(EventType.STAGE_STARTED, {"stage": "swarm_fanout", "task_count": len(plan.tasks)})
-        
-        task_coroutines = []
-        for task in plan.tasks:
-            coro = self._dispatch_task(task, goal, pool, cycle, previous_insights)
-            task_coroutines.append(coro)
-            
-        # asyncio.gather — all sub-agents run in parallel, semaphore gates LLM calls
-        raw_results = await asyncio.gather(*task_coroutines, return_exceptions=True)
-        
-        # Step 3: Filter exceptions, apply injection guard
-        valid_results = []
-        for task, result in zip(plan.tasks, raw_results):
-            if isinstance(result, Exception):
-                self.logger.warning(f"Task {task.task_id} ({task.agent_type}) failed: {result}")
-                continue
-            if self.injection_guard and "web_content" in result:
-                result["web_content"] = await self.injection_guard.sanitize(result["web_content"])
-            valid_results.append((task, result))
-            
-        # Step 4: Merge gate
-        merged = await self._merge_results(valid_results, plan.merge_strategy, goal)
-        
-        # Step 5: Governance gate for any irreversible outputs
+
+        # Step 2: Build WorkerSpec list from plan tasks and fan-out via WorkerPool
+        # WorkerPool gives per-worker error isolation + semaphore-bounded concurrency
+        base_context = {
+            "research_goal": goal,
+            "cycle": cycle,
+            "previous_insights": previous_insights,
+            "existing_hypotheses": list(pool.hypotheses.values()),
+            "all_hypotheses": list(pool.hypotheses.values()),
+            "pool_summary": list(pool.hypotheses.values())[:20],
+        }
+        worker_specs = [
+            WorkerSpec(
+                agent_type=t.agent_type,
+                count=1,            # PlannerOutput.tasks are 1-per-task today;
+                subtask=t.scope,    # WorkerPool supports count>1 for future use
+                priority=t.priority,
+            )
+            for t in plan.tasks
+            if t.agent_type in self.sub_agents
+        ]
+        worker_results = await self._worker_pool.execute_plan(worker_specs, base_context)
+
+        # Step 3: Apply injection guard to any web content
+        for wr in worker_results:
+            if not wr.failed and self.injection_guard and "web_content" in wr.result:
+                wr.result["web_content"] = await self.injection_guard.sanitize(wr.result["web_content"])
+
+        # Step 4: ResultMerger — typed merge back into HypothesisPool
+        merge_summary = ResultMerger.merge(worker_results, pool)
+        if merge_summary["errors"]:
+            for err in merge_summary["errors"]:
+                self.logger.warning(f"[WorkerPool error] {err}")
+
+        # Build a MergedResult-compatible object for backward compat with orchestrator
+        merged = MergedResult(
+            new_hypotheses=[h.model_dump() if hasattr(h, "model_dump") else h
+                            for h in merge_summary["new_hypotheses"]],
+            search_findings=[],
+            synthesis_notes="",
+        )
+
+        # Step 5: Governance gate
         if self.governance_gate:
             merged = await self.governance_gate.check(merged, context)
-            
+
         await self._publish_event(EventType.STAGE_COMPLETED, {"stage": "swarm_cycle", "cycle": cycle})
-        
+
+        failed_count = sum(1 for wr in worker_results if wr.failed)
         return {
             "merged": merged,
             "plan": plan,
-            "task_count": len(plan.tasks),
-            "failed_count": len(plan.tasks) - len(valid_results),
+            "task_count": len(worker_specs),
+            "failed_count": failed_count,
         }
         
     async def _plan_cycle(
@@ -144,60 +172,54 @@ class SwarmOrchestrator(BaseAgent):
         cycle: int,
         previous_insights: str,
         max_workers: int,
+        convergence_info: str = "",
     ) -> SwarmPlan:
-        """Ask K2.6 to decompose this cycle into parallel sub-tasks."""
-        
-        # Serialize top-10 pool state into prompt (exploit 256K ctx)
-        top_hyps = sorted(
-            pool.hypotheses.values(),
-            key=lambda h: h.trueskill_rating.conservative_rating,
-            reverse=True
-        )[:10]
-        
-        pool_summary = "\n".join([
-            f"- [{h.id}] {h.title} (score={h.trueskill_rating.conservative_rating:.1f}, "
-            f"criticisms={len(h.criticisms)}, evidence={len(h.evidence)})"
-            for h in top_hyps
-        ])
-        
-        prompt = f"""You are the lead orchestrator for a self-improving scientific discovery system.
+        """Delegate planning to PlannerAgent (K2.6 with top-30 long-context)."""
+        # Lazy-init PlannerAgent to avoid circular imports at module load
+        if self._planner is None:
+            self._planner = PlannerAgent(self.config, self.event_bus, self.llm)
+            if self.memory:
+                self._planner.memory = self.memory
 
-Research Goal: {goal}
-Cycle: {cycle}
-Max parallel workers: {max_workers}
+        long_context_top_n = getattr(getattr(self.config, "agents", None), "long_context_top_n", 30)
+        planner_enabled = getattr(getattr(self.config, "agents", None), "planner_enabled", True)
 
-Current top hypotheses:
-{pool_summary if pool_summary else "[No hypotheses yet — this is cycle 1]"}
+        if planner_enabled:
+            try:
+                result = await self._planner.execute({
+                    "pool": pool,
+                    "leaderboard": [],  # no leaderboard at this point; ranking is post-swarm
+                    "cycle": cycle,
+                    "previous_insights": previous_insights,
+                    "research_goal": goal,
+                    "convergence_info": convergence_info,
+                    "max_workers": max_workers,
+                    "long_context_top_n": long_context_top_n,
+                })
+                planner_output: PlannerOutput = result["plan"]
+                # Adapt PlannerOutput.tasks → SwarmPlan.tasks, filter to known agents
+                valid_tasks = [
+                    SwarmTask(
+                        agent_type=t.agent_type,
+                        scope=t.scope,
+                        context_snippet=t.context_snippet,
+                        priority=t.priority,
+                    )
+                    for t in planner_output.tasks
+                    if t.agent_type in self.sub_agents
+                ][:max_workers]
 
-Previous cycle insights:
-{previous_insights[:2000] if previous_insights else "[None — first cycle]"}
+                if valid_tasks:
+                    return SwarmPlan(
+                        reasoning=planner_output.reasoning,
+                        tasks=valid_tasks,
+                        merge_strategy=planner_output.merge_strategy,
+                    )
+                self.logger.warning("PlannerAgent returned no valid tasks, falling back to default plan")
+            except Exception as e:
+                self.logger.warning(f"PlannerAgent failed ({e}), falling back to default plan")
 
-Your job: decompose this cycle into {min(max_workers, 5)} parallel sub-agent tasks.
-
-Available agent types: generation, search, reflection, evolution
-
-Rules:
-- generation tasks: create NEW hypotheses that fill gaps or explore new directions
-- search tasks: find evidence for specific hypotheses or open questions
-- reflection tasks: critique specific hypotheses by ID
-- evolution tasks: refine top-ranked hypotheses that have criticisms
-
-Each task gets a "scope" (what to focus on) and a "context_snippet" (relevant hypothesis IDs/text).
-Set merge_strategy to "best_score" if tasks produce competing hypotheses, "union" if they're complementary.
-
-CRITICAL: Do NOT spawn more than {max_workers} tasks. Quality over quantity."""
-
-        try:
-            plan = await self._call_llm(
-                system_prompt="You are a precise research orchestrator. Return a valid JSON SwarmPlan.",
-                user_prompt=prompt,
-                response_format=SwarmPlan,
-            )
-            plan.tasks = [t for t in plan.tasks if t.agent_type in self.sub_agents][:max_workers]
-            return plan
-        except Exception as e:
-            self.logger.warning(f"SwarmPlan LLM call failed ({e}), using default plan")
-            return self._default_plan(goal, pool, cycle, max_workers)
+        return self._default_plan(goal, pool, cycle, max_workers)
             
     def _default_plan(self, goal: str, pool: HypothesisPool, cycle: int, max_workers: int) -> SwarmPlan:
         """Fallback plan if K2.6 planning call fails."""

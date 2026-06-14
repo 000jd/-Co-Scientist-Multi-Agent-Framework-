@@ -18,6 +18,13 @@ class SupervisorAgent(BaseAgent):
         hypotheses: List[Hypothesis] = context["hypotheses"]
         cycle = context.get("cycle", 0)
         convergence = context.get("convergence_tracker")
+
+        # Check PlannerAgent convergence hint first (cheapest gate)
+        swarm_plan = context.get("swarm_plan")
+        if swarm_plan:
+            hint = getattr(swarm_plan, "convergence_hint", "")
+            if hint and "converged" in hint.lower():
+                return {"action": "trigger_meta_review", "reason": "planner_convergence_hint"}
         
         # 1. Check governance gates
         gated = [h for h in hypotheses if any(
